@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: sih_health_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: sih_health_companion
+    volumes:
+      - mongodb_data:/data/db
+
+volumes:
+  mongodb_data:
