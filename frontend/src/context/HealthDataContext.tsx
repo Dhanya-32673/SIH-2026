@@ -96,6 +96,7 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [audioAlertsEnabled, setAudioAlertsEnabled] = useState<boolean>(true);
 
   const isSocketConnectedRef = useRef(false);
+  const restFailureCountRef = useRef(0);
 
   // Centralized REST data refresh function
   const refreshData = useCallback(async () => {
@@ -110,6 +111,23 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         apiService.getEmergencyStatus(),
         apiService.getDemoStatus(),
       ]);
+
+      const isAnyRestSuccessful =
+        alertRes.status === 'fulfilled' ||
+        healthRes.status === 'fulfilled' ||
+        envRes.status === 'fulfilled' ||
+        riskRes.status === 'fulfilled' ||
+        demoRes.status === 'fulfilled';
+
+      if (isAnyRestSuccessful) {
+        restFailureCountRef.current = 0;
+        setIsConnected(true);
+      } else {
+        restFailureCountRef.current++;
+        if (restFailureCountRef.current >= 3 && !isSocketConnectedRef.current) {
+          setIsConnected(false);
+        }
+      }
 
       // Update Alerts from REST
       if (alertRes.status === 'fulfilled' && alertRes.value?.data) {
@@ -155,19 +173,42 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
     } catch {
-      // Quiet background error
+      restFailureCountRef.current++;
+      if (restFailureCountRef.current >= 3 && !isSocketConnectedRef.current) {
+        setIsConnected(false);
+      }
     }
   }, [isAuthenticated]);
 
   // Authenticated initialization & lifecycle
   useEffect(() => {
     if (!isAuthenticated) {
-      // If user logs out, disconnect socket and reset
+      // Guest mode: provide active simulated telemetry and mark connection healthy
       socketService.disconnect();
       isSocketConnectedRef.current = false;
-      setIsConnected(false);
+      setIsConnected(true);
       setEmergency(null);
-      return;
+
+      // Lightweight realistic vital variance for guest demo
+      const guestInterval = setInterval(() => {
+        setTelemetry((prev) => {
+          const hrDelta = (Math.random() - 0.5) * 2;
+          const newHr = Math.round(Math.max(65, Math.min(88, prev.health.heartRate + hrDelta)));
+          const next: ITelemetryPayload = {
+            ...prev,
+            timestamp: new Date().toISOString(),
+            health: {
+              ...prev.health,
+              heartRate: newHr,
+              spo2: +(98 + Math.random() * 1.5).toFixed(1),
+            },
+          };
+          setHistory((h) => [...h, next].slice(-120));
+          return next;
+        });
+      }, 2000);
+
+      return () => clearInterval(guestInterval);
     }
 
     // 1. Initial REST data load
@@ -192,17 +233,17 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       },
       (connected) => {
         isSocketConnectedRef.current = connected;
-        setIsConnected(connected);
+        if (connected) {
+          setIsConnected(true);
+        }
       },
     );
 
     // 3. Fallback polling interval: keeps data fresh if socket is delayed or in serverless REST mode
     const pollInterval = setInterval(() => {
-      // If disconnected from socket or needing alerts sync, poll REST
       if (!isSocketConnectedRef.current) {
         refreshData();
       } else {
-        // Even when socket is live, refresh alerts occasionally (every 10s) to catch external changes
         apiService.getRecentAlerts(10).then((res) => {
           if (res?.data) {
             setAlerts((prev) => {

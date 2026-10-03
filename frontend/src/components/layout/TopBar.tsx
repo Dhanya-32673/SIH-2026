@@ -76,7 +76,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenDemoDrawer }) => {
               }`}
             />
             <span className="text-slate-300">
-              {isConnected ? 'LIVE SYNC' : 'RECONNECTING'}
+              {isConnected ? (isAuthenticated ? 'LIVE SYNC' : 'DEMO LIVE') : 'RECONNECTING'}
             </span>
           </div>
 
