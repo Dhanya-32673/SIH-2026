@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { AppController } from './app.controller';
 import { DatabaseModule } from './database/database.module';
 import { SimulationModule } from './simulation/simulation.module';
 import { RiskEngineModule } from './risk-engine/risk-engine.module';
@@ -11,6 +13,7 @@ import { DemoModule } from './demo/demo.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { HistoryModule } from './history/history.module';
 import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
 
 @Module({
   imports: [
@@ -29,6 +32,13 @@ import { AuthModule } from './auth/auth.module';
     WebsocketModule,
     HistoryModule,
     AuthModule,
+  ],
+  controllers: [AppController],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
   ],
 })
 export class AppModule {}

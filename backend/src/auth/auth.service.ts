@@ -1,10 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import * as nodemailer from 'nodemailer';
 
 interface IOtpRecord {
   otp: string;
   expiresAt: number;
+}
+
+export interface IAuthResponse {
+  success: boolean;
+  message: string;
+  token?: string;
+  access_token?: string;
+  user?: {
+    id: string;
+    email?: string;
+    phoneNumber?: string;
+    type?: string;
+  };
 }
 
 @Injectable()
@@ -14,7 +28,10 @@ export class AuthService {
   private phoneOtps = new Map<string, IOtpRecord>();
   private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly jwtService: JwtService,
+  ) {
     this.initMailTransporter();
   }
 
@@ -39,6 +56,18 @@ export class AuthService {
 
   private generate6DigitOtp(): string {
     return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  public generateJwtToken(payload: { sub: string; email?: string; phoneNumber?: string; type: string }): string {
+    return this.jwtService.sign(payload);
+  }
+
+  public validateToken(token: string): any {
+    try {
+      return this.jwtService.verify(token);
+    } catch {
+      return null;
+    }
   }
 
   public async sendEmailOtp(email: string): Promise<{ success: boolean; message: string }> {
@@ -67,7 +96,7 @@ export class AuthService {
           `,
         });
         return { success: true, message: 'OTP sent successfully to your email.' };
-      } catch (err) {
+      } catch (err: any) {
         this.logger.error(`Failed to send email via SMTP: ${err.message}. Falling back to console logging.`);
       }
     }
@@ -84,19 +113,29 @@ export class AuthService {
     };
   }
 
-  public verifyEmailOtp(email: string, otp: string): { success: boolean; message: string } {
+  public verifyEmailOtp(email: string, otp: string): IAuthResponse {
+    const cleanEmail = email.toLowerCase().trim();
+
     // Demo bypass for easy hackathon inspection
     if (otp === '123456') {
-      return { success: true, message: 'OTP verified successfully (Demo Bypass).' };
+      const payload = { sub: cleanEmail, email: cleanEmail, type: 'email' };
+      const token = this.generateJwtToken(payload);
+      return {
+        success: true,
+        message: 'OTP verified successfully (Demo Bypass).',
+        token,
+        access_token: token,
+        user: { id: cleanEmail, email: cleanEmail, type: 'email' },
+      };
     }
 
-    const record = this.emailOtps.get(email.toLowerCase());
+    const record = this.emailOtps.get(cleanEmail);
     if (!record) {
       return { success: false, message: 'No OTP requested for this email.' };
     }
 
     if (Date.now() > record.expiresAt) {
-      this.emailOtps.delete(email.toLowerCase());
+      this.emailOtps.delete(cleanEmail);
       return { success: false, message: 'OTP code has expired.' };
     }
 
@@ -104,20 +143,30 @@ export class AuthService {
       return { success: false, message: 'Invalid OTP code.' };
     }
 
-    this.emailOtps.delete(email.toLowerCase());
-    return { success: true, message: 'OTP verified successfully.' };
+    this.emailOtps.delete(cleanEmail);
+    const payload = { sub: cleanEmail, email: cleanEmail, type: 'email' };
+    const token = this.generateJwtToken(payload);
+
+    return {
+      success: true,
+      message: 'OTP verified successfully.',
+      token,
+      access_token: token,
+      user: { id: cleanEmail, email: cleanEmail, type: 'email' },
+    };
   }
 
   public async sendPhoneOtp(phoneNumber: string): Promise<{ success: boolean; message: string }> {
     const otp = this.generate6DigitOtp();
     const expiresAt = Date.now() + 5 * 60 * 1000;
-    this.phoneOtps.set(phoneNumber, { otp, expiresAt });
+    const cleanPhone = phoneNumber.trim();
+    this.phoneOtps.set(cleanPhone, { otp, expiresAt });
 
-    this.logger.log(`[Phone OTP Service] Generated OTP ${otp} for ${phoneNumber}`);
+    this.logger.log(`[Phone OTP Service] Generated OTP ${otp} for ${cleanPhone}`);
 
     // Print to console for verification
     console.log('\n======================================================');
-    console.log(`🔑 [DEMO OTP INTERCEPTOR] PHONE NUMBER: ${phoneNumber}`);
+    console.log(`🔑 [DEMO OTP INTERCEPTOR] PHONE NUMBER: ${cleanPhone}`);
     console.log(`🔑 CODE: ${otp}`);
     console.log('======================================================\n');
 
@@ -127,18 +176,28 @@ export class AuthService {
     };
   }
 
-  public verifyPhoneOtp(phoneNumber: string, otp: string): { success: boolean; message: string } {
+  public verifyPhoneOtp(phoneNumber: string, otp: string): IAuthResponse {
+    const cleanPhone = phoneNumber.trim();
+
     if (otp === '123456') {
-      return { success: true, message: 'OTP verified successfully (Demo Bypass).' };
+      const payload = { sub: cleanPhone, phoneNumber: cleanPhone, type: 'phone' };
+      const token = this.generateJwtToken(payload);
+      return {
+        success: true,
+        message: 'OTP verified successfully (Demo Bypass).',
+        token,
+        access_token: token,
+        user: { id: cleanPhone, phoneNumber: cleanPhone, type: 'phone' },
+      };
     }
 
-    const record = this.phoneOtps.get(phoneNumber);
+    const record = this.phoneOtps.get(cleanPhone);
     if (!record) {
       return { success: false, message: 'No OTP requested for this phone number.' };
     }
 
     if (Date.now() > record.expiresAt) {
-      this.phoneOtps.delete(phoneNumber);
+      this.phoneOtps.delete(cleanPhone);
       return { success: false, message: 'OTP code has expired.' };
     }
 
@@ -146,7 +205,37 @@ export class AuthService {
       return { success: false, message: 'Invalid OTP code.' };
     }
 
-    this.phoneOtps.delete(phoneNumber);
-    return { success: true, message: 'OTP verified successfully.' };
+    this.phoneOtps.delete(cleanPhone);
+    const payload = { sub: cleanPhone, phoneNumber: cleanPhone, type: 'phone' };
+    const token = this.generateJwtToken(payload);
+
+    return {
+      success: true,
+      message: 'OTP verified successfully.',
+      token,
+      access_token: token,
+      user: { id: cleanPhone, phoneNumber: cleanPhone, type: 'phone' },
+    };
+  }
+
+  public loginWithCredentials(identifier: string): IAuthResponse {
+    const isEmail = identifier.includes('@');
+    const clean = identifier.trim();
+    const payload = isEmail
+      ? { sub: clean.toLowerCase(), email: clean.toLowerCase(), type: 'email' }
+      : { sub: clean, phoneNumber: clean, type: 'phone' };
+
+    const token = this.generateJwtToken(payload);
+    return {
+      success: true,
+      message: 'Authentication successful.',
+      token,
+      access_token: token,
+      user: {
+        id: clean,
+        ...(isEmail ? { email: clean.toLowerCase() } : { phoneNumber: clean }),
+        type: isEmail ? 'email' : 'phone',
+      },
+    };
   }
 }

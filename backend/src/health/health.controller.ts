@@ -13,12 +13,31 @@ export class HealthController {
     };
   }
 
-  @Get('history')
-  getHistory(@Query('limit') limit?: string) {
-    const lim = limit ? parseInt(limit, 10) : 60;
+  @Get('count')
+  @Get('cnt')
+  getCount() {
     return {
       success: true,
-      data: this.healthService.getHistory(lim),
+      count: 1,
+      cnt: 1,
+      data: { activeSensors: 4, telemetryRateHz: 1 },
+    };
+  }
+
+  @Get('history')
+  getHistory(
+    @Query('limit') limit?: string,
+    @Query('cnt') cnt?: string,
+    @Query('count') count?: string,
+  ) {
+    const rawLimit = limit || cnt || count;
+    const lim = rawLimit ? parseInt(rawLimit, 10) : 60;
+    const history = this.healthService.getHistory(lim);
+    return {
+      success: true,
+      count: history.length,
+      cnt: history.length,
+      data: history,
     };
   }
 }

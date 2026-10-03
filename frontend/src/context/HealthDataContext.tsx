@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import {
   DemoScenario,
   DisasterMode,
@@ -8,6 +8,7 @@ import {
 } from '../types/health.types';
 import { socketService } from '../services/socket';
 import { apiService } from '../services/api';
+import { useAuth } from './AuthContext';
 
 interface HealthContextType {
   telemetry: ITelemetryPayload | null;
@@ -24,6 +25,7 @@ interface HealthContextType {
   respondEmergency: (action: 'SAFE' | 'NEED_HELP') => Promise<void>;
   acknowledgeAlert: (id: string) => Promise<void>;
   clearEmergency: () => Promise<void>;
+  refreshData: () => Promise<void>;
 }
 
 const initialTelemetry: ITelemetryPayload = {
@@ -82,6 +84,8 @@ const initialTelemetry: ITelemetryPayload = {
 const HealthDataContext = createContext<HealthContextType | undefined>(undefined);
 
 export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated } = useAuth();
+
   const [telemetry, setTelemetry] = useState<ITelemetryPayload>(initialTelemetry);
   const [history, setHistory] = useState<ITelemetryPayload[]>([]);
   const [isConnected, setIsConnected] = useState<boolean>(false);
@@ -91,23 +95,85 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [disasterMode, setDisasterModeState] = useState<DisasterMode>('NORMAL');
   const [audioAlertsEnabled, setAudioAlertsEnabled] = useState<boolean>(true);
 
-  // Load initial alerts from REST
-  useEffect(() => {
-    const fetchInitialData = async () => {
-      try {
-        const alertRes = await apiService.getAlerts(20);
-        if (alertRes?.data) {
-          setAlerts(alertRes.data);
-        }
-      } catch (e) {
-        // quiet fallback
-      }
-    };
-    fetchInitialData();
-  }, []);
+  const isSocketConnectedRef = useRef(false);
 
-  // Connect to real-time WebSocket
+  // Centralized REST data refresh function
+  const refreshData = useCallback(async () => {
+    if (!isAuthenticated) return;
+
+    try {
+      const [alertRes, healthRes, envRes, riskRes, emergRes, demoRes] = await Promise.allSettled([
+        apiService.getAlerts(30),
+        apiService.getLatestHealth(),
+        apiService.getLatestEnvironment(),
+        apiService.getCurrentRisk(),
+        apiService.getEmergencyStatus(),
+        apiService.getDemoStatus(),
+      ]);
+
+      // Update Alerts from REST
+      if (alertRes.status === 'fulfilled' && alertRes.value?.data) {
+        setAlerts(alertRes.value.data);
+      }
+
+      // Update Emergency status
+      if (emergRes.status === 'fulfilled' && emergRes.value?.data) {
+        setEmergency(emergRes.value.data);
+      } else if (emergRes.status === 'fulfilled' && emergRes.value?.active === false) {
+        setEmergency(null);
+      }
+
+      // Update Scenario & Disaster Mode
+      if (demoRes.status === 'fulfilled' && demoRes.value) {
+        if (demoRes.value.scenario) setActiveScenarioState(demoRes.value.scenario);
+        if (demoRes.value.disasterMode) setDisasterModeState(demoRes.value.disasterMode);
+      }
+
+      // If socket is NOT connected, compose telemetry from REST results to keep frontend lively
+      if (!isSocketConnectedRef.current) {
+        const latestHealth = healthRes.status === 'fulfilled' ? healthRes.value?.data : null;
+        const latestEnv = envRes.status === 'fulfilled' ? envRes.value?.data : null;
+        const latestRisk = riskRes.status === 'fulfilled' ? riskRes.value?.data : null;
+
+        if (latestHealth || latestEnv || latestRisk) {
+          setTelemetry((prev) => {
+            const nextPayload: ITelemetryPayload = {
+              ...prev,
+              timestamp: new Date().toISOString(),
+              health: latestHealth ? { ...prev.health, ...latestHealth } : prev.health,
+              environment: latestEnv ? { ...prev.environment, ...latestEnv } : prev.environment,
+              risk: latestRisk ? { ...prev.risk, ...latestRisk } : prev.risk,
+            };
+
+            setHistory((oldHist) => {
+              const updated = [...oldHist, nextPayload];
+              return updated.slice(-120);
+            });
+
+            return nextPayload;
+          });
+        }
+      }
+    } catch {
+      // Quiet background error
+    }
+  }, [isAuthenticated]);
+
+  // Authenticated initialization & lifecycle
   useEffect(() => {
+    if (!isAuthenticated) {
+      // If user logs out, disconnect socket and reset
+      socketService.disconnect();
+      isSocketConnectedRef.current = false;
+      setIsConnected(false);
+      setEmergency(null);
+      return;
+    }
+
+    // 1. Initial REST data load
+    refreshData();
+
+    // 2. Connect real-time WebSocket
     const socket = socketService.connect(
       (newTelemetry) => {
         setTelemetry(newTelemetry);
@@ -115,7 +181,7 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setDisasterModeState(newTelemetry.disasterMode);
         setHistory((prev) => {
           const updated = [...prev, newTelemetry];
-          return updated.slice(-120); // Keep last 120 points
+          return updated.slice(-120);
         });
       },
       (newAlert) => {
@@ -125,57 +191,94 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setEmergency(emerg);
       },
       (connected) => {
+        isSocketConnectedRef.current = connected;
         setIsConnected(connected);
       },
     );
 
-    return () => {
-      // Don't disconnect on simple re-renders
-    };
-  }, []);
-
-  const setScenario = useCallback(async (scenario: DemoScenario) => {
-    setActiveScenarioState(scenario);
-    // Send via socket and REST for maximum reliability
-    socketService.setScenario(scenario);
-    try {
-      await apiService.setDemoScenario(scenario);
-    } catch (e) {
-      // socket fallback handles it
-    }
-  }, []);
-
-  const setDisasterMode = useCallback(async (mode: DisasterMode) => {
-    setDisasterModeState(mode);
-    socketService.setDisasterMode(mode);
-    try {
-      await apiService.setDisasterMode(mode);
-    } catch (e) {
-      // socket fallback handles it
-    }
-  }, []);
-
-  const respondEmergency = useCallback(async (action: 'SAFE' | 'NEED_HELP') => {
-    socketService.respondEmergency(action);
-    try {
-      const res = await apiService.respondEmergency(action);
-      if (res?.emergency) {
-        setEmergency(res.emergency);
+    // 3. Fallback polling interval: keeps data fresh if socket is delayed or in serverless REST mode
+    const pollInterval = setInterval(() => {
+      // If disconnected from socket or needing alerts sync, poll REST
+      if (!isSocketConnectedRef.current) {
+        refreshData();
+      } else {
+        // Even when socket is live, refresh alerts occasionally (every 10s) to catch external changes
+        apiService.getRecentAlerts(10).then((res) => {
+          if (res?.data) {
+            setAlerts((prev) => {
+              const ids = new Set(res.data.map((a: any) => a.id));
+              const combined = [...res.data, ...prev.filter((a) => !ids.has(a.id))];
+              return combined.slice(0, 50);
+            });
+          }
+        }).catch(() => {});
       }
-    } catch (e) {
-      // handled via socket event
-    }
-  }, []);
+    }, 2000);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [isAuthenticated, refreshData]);
+
+  const setScenario = useCallback(
+    async (scenario: DemoScenario) => {
+      setActiveScenarioState(scenario);
+      socketService.setScenario(scenario);
+
+      try {
+        await apiService.setDemoScenario(scenario);
+        // Immediately refresh state from backend
+        setTimeout(refreshData, 200);
+      } catch {
+        // Socket fallback
+      }
+    },
+    [refreshData],
+  );
+
+  const setDisasterMode = useCallback(
+    async (mode: DisasterMode) => {
+      setDisasterModeState(mode);
+      socketService.setDisasterMode(mode);
+
+      try {
+        await apiService.setDisasterMode(mode);
+        setTimeout(refreshData, 200);
+      } catch {
+        // Socket fallback
+      }
+    },
+    [refreshData],
+  );
+
+  const respondEmergency = useCallback(
+    async (action: 'SAFE' | 'NEED_HELP') => {
+      socketService.respondEmergency(action);
+
+      try {
+        const res = await apiService.respondEmergency(action);
+        if (res?.emergency) {
+          setEmergency(res.emergency);
+        } else if (action === 'SAFE') {
+          setEmergency(null);
+        }
+      } catch {
+        // Handled via socket
+      }
+    },
+    [],
+  );
 
   const acknowledgeAlert = useCallback(async (id: string) => {
     socketService.acknowledgeAlert(id);
     setAlerts((prev) =>
       prev.map((a) => (a.id === id ? { ...a, acknowledged: true } : a)),
     );
+
     try {
       await apiService.acknowledgeAlert(id);
-    } catch (e) {
-      // ok
+    } catch {
+      // Ok
     }
   }, []);
 
@@ -183,8 +286,8 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setEmergency(null);
     try {
       await apiService.clearEmergency();
-    } catch (e) {
-      // ok
+    } catch {
+      // Ok
     }
   }, []);
 
@@ -205,6 +308,7 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         respondEmergency,
         acknowledgeAlert,
         clearEmergency,
+        refreshData,
       }}
     >
       {children}

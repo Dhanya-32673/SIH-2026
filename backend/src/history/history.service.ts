@@ -70,6 +70,9 @@ export class HistoryService {
     return {
       success: true,
       points: dataPoints.length,
+      count: dataPoints.length,
+      cnt: dataPoints.length,
+      total: dataPoints.length,
       data: dataPoints,
     };
   }

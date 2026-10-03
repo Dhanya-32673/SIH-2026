@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Alert, AlertDocument } from '../database/schemas/alert.schema';
 import { IRiskAssessment, RiskStatus } from '../common/interfaces/telemetry.interface';
 
@@ -136,6 +136,71 @@ export class AlertsService {
     return this.getAlerts(5);
   }
 
+  public async getAlertsCount(): Promise<{ total: number; cnt: number; unacknowledged: number }> {
+    let total = this.memoryAlerts.length;
+    let unacknowledged = this.memoryAlerts.filter((a) => !a.acknowledged).length;
+
+    try {
+      if (this.alertModel) {
+        total = await this.alertModel.countDocuments().exec();
+        unacknowledged = await this.alertModel.countDocuments({ acknowledged: false }).exec();
+      }
+    } catch (err: any) {
+      this.logger.warn(`MongoDB countDocuments failed, using in-memory count: ${err.message}`);
+    }
+
+    return { total, cnt: total, unacknowledged };
+  }
+
+  public async createCustomAlert(data: {
+    message: string;
+    severity?: 'INFO' | 'WARNING' | 'CRITICAL';
+    type?: string;
+    reasons?: string[];
+    recommendedActions?: string[];
+  }): Promise<any> {
+    const alertData = {
+      id: `alert-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      userId: 'demo_user_anonymous',
+      severity: data.severity || 'WARNING',
+      type: data.type || 'MANUAL_ALERT',
+      message: data.message,
+      reasons: data.reasons || ['Manual alert initiated by operator'],
+      recommendedActions: data.recommendedActions || ['Inspect patient condition immediately'],
+      acknowledged: false,
+      timestamp: new Date(),
+    };
+
+    this.memoryAlerts.unshift(alertData);
+    if (this.memoryAlerts.length > 100) this.memoryAlerts.pop();
+
+    try {
+      if (this.alertModel) {
+        await this.alertModel.create(alertData);
+      }
+    } catch (err: any) {
+      this.logger.warn(`MongoDB alert creation fallback: ${err.message}`);
+    }
+
+    return alertData;
+  }
+
+  public async deleteAlert(id: string): Promise<boolean> {
+    const initialLen = this.memoryAlerts.length;
+    this.memoryAlerts = this.memoryAlerts.filter((a) => a.id !== id);
+
+    try {
+      if (this.alertModel) {
+        const filter = Types.ObjectId.isValid(id) ? { $or: [{ _id: id }, { id }] } : { id };
+        await this.alertModel.deleteOne(filter as any).exec();
+      }
+      return true;
+    } catch (err: any) {
+      this.logger.warn(`MongoDB delete error: ${err.message}`);
+      return this.memoryAlerts.length < initialLen;
+    }
+  }
+
   public async acknowledgeAlert(id: string): Promise<boolean> {
     // Update in-memory
     const memIndex = this.memoryAlerts.findIndex((a) => a.id === id);
@@ -146,8 +211,9 @@ export class AlertsService {
     // Update in Mongo
     try {
       if (this.alertModel) {
+        const filter = Types.ObjectId.isValid(id) ? { $or: [{ _id: id }, { id }] } : { id };
         await this.alertModel.updateOne(
-          { $or: [{ _id: id }, { id }] },
+          filter as any,
           { $set: { acknowledged: true, acknowledgedAt: new Date() } },
         );
       }
@@ -158,3 +224,4 @@ export class AlertsService {
     }
   }
 }
+

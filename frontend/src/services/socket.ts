@@ -7,7 +7,8 @@ import {
   ITelemetryPayload,
 } from '../types/health.types';
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'http://localhost:4000';
+const rawWsUrl = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const WS_BASE_URL = rawWsUrl.replace(/\/+$/, '');
 
 class SocketService {
   private socket: Socket | null = null;
@@ -23,12 +24,17 @@ class SocketService {
       return this.socket;
     }
 
+    const token = localStorage.getItem('sih_health_token');
+
     this.socket = io(`${WS_BASE_URL}/health`, {
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 50,
+      auth: {
+        token: token ? `Bearer ${token}` : undefined,
+      },
+      reconnectionAttempts: 20,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 10000,
+      timeout: 8000,
     });
 
     this.socket.on('connect', () => {
