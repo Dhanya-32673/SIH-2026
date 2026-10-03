@@ -171,3 +171,5 @@ The frontend includes a **Sticky Demo Bar** and a **Demo Hub Modal** for hackath
 
 ## ⚖️ Non-Diagnostic Medical Disclaimer
 *This project is an engineering and AI research prototype developed for SIH 2026. All risk indicators and early-warning alerts are strictly non-diagnostic decision-support signals. The system does not contact real emergency services.*
+
+# SIH-2026
