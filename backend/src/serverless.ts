@@ -22,8 +22,19 @@ async function bootstrapServerless() {
 }
 
 export default async function handler(req: Request, res: Response) {
-  if (!isAppInitialized) {
-    await bootstrapServerless();
+  try {
+    if (!isAppInitialized) {
+      await bootstrapServerless();
+    }
+    return server(req, res);
+  } catch (error: any) {
+    console.error('Serverless execution error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        statusCode: 500,
+        message: 'Internal server error during serverless execution',
+        error: error?.message || String(error),
+      });
+    }
   }
-  server(req, res);
 }
