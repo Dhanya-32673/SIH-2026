@@ -30,10 +30,17 @@ const featureSchemas = [
         logger.log(`Connecting to MongoDB at: ${uri}`);
         return {
           uri,
-          serverSelectionTimeoutMS: 2500, // Quick timeout to failover if offline
-          connectTimeoutMS: 2500,
-          retryAttempts: 2,
-          retryDelay: 1000,
+          lazyConnection: true,
+          serverSelectionTimeoutMS: 2000,
+          connectTimeoutMS: 2000,
+          retryAttempts: 0,
+          retryDelay: 500,
+          connectionFactory: (connection: any) => {
+            connection.on('error', (err: any) => {
+              logger.warn(`MongoDB runtime notice: ${err.message}. Seamlessly using in-memory telemetry.`);
+            });
+            return connection;
+          },
         };
       },
       inject: [ConfigService],
