@@ -7,8 +7,17 @@ import {
   ITelemetryPayload,
 } from '../types/health.types';
 
-const rawWsUrl = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL || 'http://localhost:4000';
-const WS_BASE_URL = rawWsUrl.replace(/\/+$/, '');
+const resolveWsUrl = (): string => {
+  if (import.meta.env.VITE_WS_URL && !import.meta.env.VITE_WS_URL.includes('localhost')) {
+    return import.meta.env.VITE_WS_URL;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+    return 'https://sih-2026-xi-khaki.vercel.app';
+  }
+  return import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL || 'http://localhost:4000';
+};
+
+const WS_BASE_URL = resolveWsUrl().replace(/\/+$/, '');
 
 class SocketService {
   private socket: Socket | null = null;

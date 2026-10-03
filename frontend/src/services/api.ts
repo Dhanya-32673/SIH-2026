@@ -1,9 +1,18 @@
 import axios from 'axios';
 import { DemoScenario, DisasterMode } from '../types/health.types';
 
-// Sanitize base URL (strip trailing slashes)
-const rawBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-export const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '');
+// Sanitize and resolve base URL (support local dev and Vercel production automatically)
+const resolveApiUrl = (): string => {
+  if (import.meta.env.VITE_API_URL && !import.meta.env.VITE_API_URL.includes('localhost')) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+    return 'https://sih-2026-xi-khaki.vercel.app';
+  }
+  return import.meta.env.VITE_API_URL || 'http://localhost:4000';
+};
+
+export const API_BASE_URL = resolveApiUrl().replace(/\/+$/, '');
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

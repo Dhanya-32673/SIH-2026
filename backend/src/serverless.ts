@@ -1,9 +1,11 @@
+import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ExpressAdapter } from '@nestjs/platform-express';
-import express, { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 
-const server = express();
+const express = require('express');
+const server = typeof express === 'function' ? express() : (express.default || express)();
 let isAppInitialized = false;
 
 async function bootstrapServerless() {
